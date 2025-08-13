@@ -1,10 +1,12 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { HttpError } from "../../routes/cities/errors/http-error";
 import { CountryIsoCode } from "../../routes/cities/application/abstraction/country-iso-code.interface";
 
 @Injectable()
 export class CountryNowServiceProvider {
+  private readonly logger = new Logger(CountryNowServiceProvider.name);
+
   private COUNTRIES_NOW_API_BASE_URL: string;
   constructor(private configService: ConfigService) {
     this.COUNTRIES_NOW_API_BASE_URL = this.configService.get<string>(
@@ -22,8 +24,13 @@ export class CountryNowServiceProvider {
     );
 
     const contriesResponse = await countriesIsoCode.json();
-
+    this.logger.log(
+      `Fetched country ISO codes from ${this.COUNTRIES_NOW_API_BASE_URL}`
+    );
     if (!contriesResponse || !contriesResponse.data) {
+      this.logger.error(
+        "Failed to fetch country ISO codes or invalid response structure"
+      );
       throw new HttpError(
         "Failed to fetch country ISO codes",
         500,

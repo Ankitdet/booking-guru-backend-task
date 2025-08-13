@@ -8,7 +8,7 @@ import { ConfigModule } from "@nestjs/config";
 import { CqrsModule } from "@nestjs/cqrs";
 import { CoreCommonModule } from "./core-common/core-common.module";
 import { TokenMiddleware } from "./middleware/auth-middleware";
-import { CitiesModule } from "./routes/cities/cities.module";
+import { CitiesModule } from "./routes/cities/city.module";
 
 @Global()
 @Module({

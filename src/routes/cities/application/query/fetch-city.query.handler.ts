@@ -1,6 +1,6 @@
-import { ConfigService } from "@nestjs/config";
 import { IQueryHandler, QueryHandler } from "@nestjs/cqrs";
 import { CountryNowServiceProvider } from "../../../../core-common/country-now-service/contry-now-service.provider";
+import { CountryPollutionServiceProvider } from "../../../../core-common/country-pollution-service/country-pollution-service.provider";
 import { WikipediaServiceProvider } from "../../../../core-common/wikipedia-service/wikipedia-servicer.provider";
 import { HttpError } from "../../errors/http-error";
 import {
@@ -9,24 +9,28 @@ import {
   MetaData,
 } from "../abstraction/city-pollution-data.interface";
 import { GetCitiesQuery } from "./fetch-city.query";
+import { Logger } from "@nestjs/common";
 
 @QueryHandler(GetCitiesQuery)
 export class FetchCityQueryHandler implements IQueryHandler<GetCitiesQuery> {
-  private readonly MOCK_API_URL: string;
+  private readonly logger = new Logger(FetchCityQueryHandler.name);
 
   constructor(
-    private configService: ConfigService,
     private readonly wikipediaServiceProvider: WikipediaServiceProvider,
-    private readonly countryNowServiceProvider: CountryNowServiceProvider
-  ) {
-    this.MOCK_API_URL = this.configService.get<string>("MOCK_API_URL");
-  }
+    private readonly countryNowServiceProvider: CountryNowServiceProvider,
+    private readonly countryServiceProvider: CountryPollutionServiceProvider
+  ) {}
 
   async execute(query: GetCitiesQuery): Promise<any> {
+    this.logger.log(
+      `Executing FetchCityQueryHandler for country: ${query.country}, page: ${query.page}, limit: ${query.limit}`
+    );
+
     const { country: countryCode, limit, page, token } = query;
 
     const countryName = await this.getCountryNameByCountryCode(countryCode);
     if (countryName === "") {
+      this.logger.warn(`Country with code ${countryCode} not found`);
       throw new HttpError(
         `Country with code ${countryCode} not found`,
         404,
@@ -36,73 +40,53 @@ export class FetchCityQueryHandler implements IQueryHandler<GetCitiesQuery> {
 
     const validCities = await this.fetchCitiesByCountry(countryName);
     if (validCities.length === 0) {
+      this.logger.warn(`No valid cities found for country ${countryName}`);
       throw new HttpError(
         `No valid cities found for country ${countryName}`,
         404,
         "Not Found"
       );
     }
-    // Fetch from mock API
-    const mockRes = await fetch(
-      `${this.MOCK_API_URL}/pollution?country=${countryCode}&page=${page}&limit=${limit}`,
-      {
-        headers: {
-          Accept: "application/json",
-          Authorization: "Bearer " + token,
-        },
-      }
-    );
-
-    const data: ApiResponse | any = await mockRes.json();
-    if (data?.error) {
-      throw new HttpError(
-        data.error,
-        mockRes.status,
-        "Failed to fetch pollution data"
+    const data: ApiResponse =
+      await this.countryServiceProvider.fetchPollutionDataByCountry(
+        countryCode,
+        page,
+        limit,
+        token
       );
-    }
-    if (!data || !data.meta || !data.results) {
-      throw new HttpError(
-        "Invalid response from mock API",
-        500,
-        "Internal Server Error"
-      );
-    }
     const metadata: MetaData = data.meta;
     const pollutionData: CityPollutionData[] = data.results || [];
 
     if (pollutionData.length === 0) {
+      this.logger.warn(`No pollution data found for country ${countryName}`);
       throw new HttpError(
         `No pollution data found for country ${countryName}`,
         404,
         "Not Found"
       );
     }
+    this.logger.log(
+      `Fetched ${pollutionData.length} pollution records for country ${countryName}`
+    );
 
-    const cityPollutionPairs = pollutionData
-      .map((item) => ({
-        city: this.normalizeCityName(item.name),
-        pollution: item.pollution || "Unknown",
-      }))
-      .filter((pair) => this.isValidCity(pair.city))
-      .filter((pair) => validCities.includes(pair.city));
-
-    // Remove duplicates by city name
-    const uniqueCityPollution = [];
-    const seen = new Set();
-    for (const pair of cityPollutionPairs) {
-      if (!seen.has(pair.city)) {
-        seen.add(pair.city);
-        uniqueCityPollution.push(pair);
-      }
-    }
     // Fetch Wikipedia data for current page, passing pollution info
+    const uniqueCityPollution = this.normalizeCityPollutionAndMakeUnique(
+      pollutionData,
+      validCities
+    );
+    this.logger.log(
+      `Normalized and filtered to ${uniqueCityPollution.length} unique city records`
+    );
 
     const cityAndPollution = await Promise.all(
       uniqueCityPollution.map((pair) =>
         this.fetchWikipediaData(pair.city, pair.pollution)
       )
     );
+    this.logger.log(
+      `Fetched Wikipedia data for ${cityAndPollution.length} cities`
+    );
+
     return {
       page,
       limit,
@@ -146,5 +130,29 @@ export class FetchCityQueryHandler implements IQueryHandler<GetCitiesQuery> {
 
   private async fetchWikipediaData(cityName: string, pollution: number) {
     return this.wikipediaServiceProvider.fetchCitySummary(cityName, pollution);
+  }
+
+  private normalizeCityPollutionAndMakeUnique(
+    pollutionData: CityPollutionData[],
+    validCities: string[]
+  ) {
+    const cityPollutionPairs = pollutionData
+      .map((item) => ({
+        city: this.normalizeCityName(item.name),
+        pollution: item.pollution || "Unknown",
+      }))
+      .filter((pair) => this.isValidCity(pair.city))
+      .filter((pair) => validCities.includes(pair.city));
+
+    // Remove duplicates by city name
+    const uniqueCityPollution = [];
+    const seen = new Set();
+    for (const pair of cityPollutionPairs) {
+      if (!seen.has(pair.city)) {
+        seen.add(pair.city);
+        uniqueCityPollution.push(pair);
+      }
+    }
+    return uniqueCityPollution;
   }
 }

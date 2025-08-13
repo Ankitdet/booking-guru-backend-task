@@ -1,10 +1,12 @@
-import { Injectable, HttpException } from "@nestjs/common";
+import { Injectable, HttpException, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
 @Injectable()
 export class WikipediaServiceProvider {
   // Base URL for the Wikipedia API, fetched from the configuration service
   private WIKIPEDIA_API_BASE_URL = "";
+  private readonly logger = new Logger(WikipediaServiceProvider.name);
+
   constructor(private configService: ConfigService) {
     this.WIKIPEDIA_API_BASE_URL = this.configService.get<string>(
       "WIKIPEDIA_API_BASE_URL"
@@ -24,10 +26,16 @@ export class WikipediaServiceProvider {
           res.status
         );
       }
+      this.logger.log(
+        `Fetched Wikipedia data for city: ${cityName} with pollution: ${pollution}`
+      );
 
       const data = await res.json();
 
       if (!data || !data.description) {
+        this.logger.warn(
+          `No description found for city: ${cityName}, returning default values`
+        );
         return {
           name: cityName,
           country: "",
